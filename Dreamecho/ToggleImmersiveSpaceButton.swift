@@ -17,34 +17,33 @@ struct ToggleImmersiveSpaceButton: View {
     var body: some View {
         Button {
             Task { @MainActor in
+                // 防止重复操作
+                guard appModel.immersiveSpaceState != .inTransition else { return }
+                
                 switch appModel.immersiveSpaceState {
                     case .open:
                         appModel.immersiveSpaceState = .inTransition
                         await dismissImmersiveSpace()
-                        // Don't set immersiveSpaceState to .closed because there
-                        // are multiple paths to ImmersiveView.onDisappear().
-                        // Only set .closed in ImmersiveView.onDisappear().
+                        // 状态会在 ImmersiveView.onDisappear() 中更新为 .closed
 
                     case .closed:
                         appModel.immersiveSpaceState = .inTransition
                         switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
                             case .opened:
-                                // Don't set immersiveSpaceState to .open because there
-                                // may be multiple paths to ImmersiveView.onAppear().
-                                // Only set .open in ImmersiveView.onAppear().
+                                // 状态会在 ImmersiveView.onAppear() 中更新为 .open
                                 break
 
                             case .userCancelled, .error:
-                                // On error, we need to mark the immersive space
-                                // as closed because it failed to open.
-                                fallthrough
+                                // 打开失败，恢复为关闭状态
+                                appModel.immersiveSpaceState = .closed
+                                
                             @unknown default:
-                                // On unknown response, assume space did not open.
+                                // 未知响应，假设空间未打开
                                 appModel.immersiveSpaceState = .closed
                         }
 
                     case .inTransition:
-                        // This case should not ever happen because button is disabled for this case.
+                        // 不应该到达这里，因为按钮已被禁用
                         break
                 }
             }
