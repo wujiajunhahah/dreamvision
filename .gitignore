@@ -134,3 +134,5 @@ test_model.usdz
 /test_model.*
 
 Dreamecho/Info.plist
+*.py
+*.sh
