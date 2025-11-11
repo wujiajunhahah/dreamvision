@@ -25,8 +25,10 @@
 	<string>需要麦克风权限来录制您的梦境语音输入</string>
 	<key>DeepSeekAPIKey</key>
 	<string>YOUR_DEEPSEEK_API_KEY_HERE</string>
-	<key>TripoAPIKey</key>
-	<string>YOUR_TRIPO_API_KEY_HERE</string>
+	<key>TencentSecretId</key>
+	<string>YOUR_TENCENT_SECRET_ID_HERE</string>
+	<key>TencentSecretKey</key>
+	<string>YOUR_TENCENT_SECRET_KEY_HERE</string>
 </dict>
 </plist>
 

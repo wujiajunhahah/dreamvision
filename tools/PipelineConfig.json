@@ -1,0 +1,17 @@
+{
+  "hunyuan": {
+    "endpoint": "https://hunyuan.tencentcloudapi.com/",
+    "region": "ap-beijing",
+    "model": "hunyuan-lite",
+    "quality": "high"
+  },
+  "poll": {
+    "interval_sec": 10,
+    "max_times": 120,
+    "timeout_sec": 1200
+  },
+  "output": {
+    "format": "glb",
+    "max_size_mb": 50
+  }
+}

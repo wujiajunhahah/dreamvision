@@ -1,0 +1,19 @@
+{
+  "subject": "22岁男生的梦境雕塑：坐在学校工位前略前倾，双手撑额，桌-椅-人-显示器合为单体结构",
+  "style": "极简写实、科幻冷感；哑光冷灰蓝树脂质感；不发光；细节适度",
+  "printability": {
+    "single_solid_mesh": true,
+    "round_base": true,
+    "low_center_of_gravity": true,
+    "no_floating_parts": true,
+    "min_thickness_mm": 2.5,
+    "safe_overhang_angle_deg": 45
+  },
+  "dimensions_cm": [12, 12, 16],
+  "annotations": [
+    "底座与椅脚/桌腿一体化加固",
+    "显示器与桌面相连不悬空",
+    "前倾但头部投影落在骨盆-底座范围内"
+  ],
+  "tripo_output_format": "glb"
+}

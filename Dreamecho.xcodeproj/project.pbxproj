@@ -83,6 +83,7 @@
 				77D040192EC09A7B0004334C /* Sources */,
 				77D0401A2EC09A7B0004334C /* Frameworks */,
 				77D0401B2EC09A7B0004334C /* Resources */,
+			AE32FC59934747C392CFD9C9 /* Convert 3D Models */,
 			);
 			buildRules = (
 			);

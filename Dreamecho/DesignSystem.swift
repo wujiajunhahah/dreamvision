@@ -10,12 +10,12 @@ import SwiftUI
 /// 组件化设计系统 - 符合 visionOS HIG + 液态玻璃效果
 /// 参考: https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass
 struct DesignSystem {
-    // MARK: - Colors (浅色主题，符合 HIG)
-    
-    static let background = Color.white
-    static let backgroundSecondary = Color(white: 0.98)
-    static let surface = Color.white
-    static let surfaceSecondary = Color(white: 0.95)
+    // MARK: - Colors (visionOS HIG 深色主题优先)
+
+    static let background = Color.black.opacity(0.9)
+    static let backgroundSecondary = Color.black.opacity(0.7)
+    static let surface = Color.black.opacity(0.3)
+    static let surfaceSecondary = Color.black.opacity(0.2)
     
     // MARK: - Liquid Glass Materials (完整实现)
     
@@ -84,19 +84,19 @@ struct DesignSystem {
             }
     }
     
-    // MARK: - Typography (符合 HIG 动态类型)
-    
-    static let largeTitle = Font.system(size: 34, weight: .bold, design: .default)
-    static let title = Font.system(size: 28, weight: .bold, design: .default)
-    static let title2 = Font.system(size: 22, weight: .semibold, design: .default)
-    static let title3 = Font.system(size: 20, weight: .semibold, design: .default)
-    static let headline = Font.system(size: 17, weight: .semibold, design: .default)
-    static let body = Font.system(size: 17, weight: .regular, design: .default)
-    static let callout = Font.system(size: 16, weight: .regular, design: .default)
-    static let subheadline = Font.system(size: 15, weight: .regular, design: .default)
-    static let footnote = Font.system(size: 13, weight: .regular, design: .default)
-    static let caption = Font.system(size: 12, weight: .regular, design: .default)
-    static let caption2 = Font.system(size: 11, weight: .regular, design: .default)
+    // MARK: - Typography (visionOS 优化字体大小)
+
+    static let largeTitle = Font.system(size: 38, weight: .bold, design: .rounded)
+    static let title = Font.system(size: 32, weight: .bold, design: .rounded)
+    static let title2 = Font.system(size: 26, weight: .semibold, design: .rounded)
+    static let title3 = Font.system(size: 24, weight: .semibold, design: .rounded)
+    static let headline = Font.system(size: 19, weight: .semibold, design: .rounded)
+    static let body = Font.system(size: 19, weight: .regular, design: .rounded)
+    static let callout = Font.system(size: 18, weight: .regular, design: .rounded)
+    static let subheadline = Font.system(size: 17, weight: .regular, design: .rounded)
+    static let footnote = Font.system(size: 15, weight: .regular, design: .rounded)
+    static let caption = Font.system(size: 14, weight: .regular, design: .rounded)
+    static let caption2 = Font.system(size: 13, weight: .regular, design: .rounded)
 }
 
 // MARK: - 可复用组件（符合 visionOS HIG）
