@@ -15,6 +15,7 @@ struct DreamDetailView: View {
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showWindowPreview = false
     
     var body: some View {
         ScrollView {
@@ -129,49 +130,80 @@ struct DreamDetailView: View {
                     }
                 }
                 
-                // 3D Model Button
-                if dream.modelURL != nil {
+                // 重新生成按钮（如果梦境有分析但没有模型）
+                if dream.analysis != nil && dream.modelURL == nil {
                     LiquidGlassButton(
-                        "Enter Immersive Space",
-                        icon: "cube.transparent.fill",
+                        "Generate 3D Model",
+                        icon: "cube.fill",
                         style: .primary,
-                        isEnabled: appModel.immersiveSpaceState != .inTransition
+                        isEnabled: !appModel.dreamStore.isLoading
                     ) {
-                        Task { @MainActor in
-                            // 防止重复操作
-                            guard appModel.immersiveSpaceState != .inTransition else { return }
-                            
-                            // 如果空间已打开，先关闭再打开新的
-                            if appModel.immersiveSpaceState == .open {
-                                // 如果选中的是同一个梦境，不需要重新打开
-                                if appModel.selectedDream?.id == dream.id {
-                                    return
-                                }
-                                // 关闭当前空间
-                                appModel.immersiveSpaceState = .inTransition
-                                await dismissImmersiveSpace()
-                                // 等待一下确保空间完全关闭
-                                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒
-                            }
-                            
-                            // 设置选中的梦境
-                            appModel.selectedDream = dream
-                            
-                            // 打开沉浸式空间
-                            appModel.immersiveSpaceState = .inTransition
-                            switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
-                            case .opened:
-                                // 状态会在 ImmersiveView.onAppear 中更新为 .open
-                                break
-                            case .userCancelled, .error:
-                                appModel.immersiveSpaceState = .closed
-                            @unknown default:
-                                appModel.immersiveSpaceState = .closed
-                            }
+                        Task {
+                            await appModel.dreamStore.generateModel(for: dream)
                         }
                     }
-                    .accessibilityLabel("View dream in 3D immersive space")
-                    .accessibilityHint("Opens a full immersive 3D view of your dream model")
+                    .accessibilityLabel("Generate 3D model for this dream")
+                    .accessibilityHint("Creates a 3D visualization of your dream")
+                }
+                
+                // 3D Model Buttons（如果已有模型）
+                if dream.modelURL != nil {
+                    VStack(spacing: 16) {
+                        // 窗口预览按钮（快速预览）
+                        LiquidGlassButton(
+                            "Preview 3D Model",
+                            icon: "cube.fill",
+                            style: .secondary,
+                            isEnabled: true
+                        ) {
+                            showWindowPreview = true
+                        }
+                        .accessibilityLabel("Preview 3D model in window")
+                        .accessibilityHint("Opens a window preview of your dream model")
+                        
+                        // 沉浸式空间按钮（完整体验）
+                        LiquidGlassButton(
+                            "Enter Immersive Space",
+                            icon: "cube.transparent.fill",
+                            style: .primary,
+                            isEnabled: appModel.immersiveSpaceState != .inTransition
+                        ) {
+                            Task { @MainActor in
+                                // 防止重复操作
+                                guard appModel.immersiveSpaceState != .inTransition else { return }
+                                
+                                // 如果空间已打开，先关闭再打开新的
+                                if appModel.immersiveSpaceState == .open {
+                                    // 如果选中的是同一个梦境，不需要重新打开
+                                    if appModel.selectedDream?.id == dream.id {
+                                        return
+                                    }
+                                    // 关闭当前空间
+                                    appModel.immersiveSpaceState = .inTransition
+                                    await dismissImmersiveSpace()
+                                    // 等待一下确保空间完全关闭
+                                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒
+                                }
+                                
+                                // 设置选中的梦境
+                                appModel.selectedDream = dream
+                                
+                                // 打开沉浸式空间
+                                appModel.immersiveSpaceState = .inTransition
+                                switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
+                                case .opened:
+                                    // 状态会在 ImmersiveView.onAppear 中更新为 .open
+                                    break
+                                case .userCancelled, .error:
+                                    appModel.immersiveSpaceState = .closed
+                                @unknown default:
+                                    appModel.immersiveSpaceState = .closed
+                                }
+                            }
+                        }
+                        .accessibilityLabel("View dream in 3D immersive space")
+                        .accessibilityHint("Opens a full immersive 3D view of your dream model")
+                    }
                 }
             }
             .padding(32)
@@ -179,6 +211,14 @@ struct DreamDetailView: View {
         .liquidGlassBackground()
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityModifiers()
+        .sheet(isPresented: $showWindowPreview) {
+            if let modelURL = dream.modelURL {
+                DreamRealityView(
+                    modelURL: modelURL,
+                    dreamTitle: dream.title
+                )
+            }
+        }
     }
 }
 

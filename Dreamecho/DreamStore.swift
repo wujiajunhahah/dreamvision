@@ -122,46 +122,62 @@ class DreamStore {
             // 调用 API 分析梦境
             let analysis = try await apiService.analyzeDream(dream.description)
             
-            // 更新结果
-            guard let currentIndex = dreams.firstIndex(where: { $0.id == dream.id }) else { return }
-            dreams[currentIndex].analysis = analysis
-            dreams[currentIndex].keywords = analysis.keywords
-            dreams[currentIndex].emotions = analysis.emotions
-            dreams[currentIndex].symbols = analysis.symbols
-            updateStatus(at: currentIndex, to: .analyzed)  // 分析完成，但未生成模型
-            currentDream = dreams[currentIndex]
-            
-            // 立即保存（确保分析结果被持久化）
-            saveDreams()
-            
-            print("✅ Dream analysis completed, status: analyzed")
-            isLoading = false
-        } catch {
-            // 更新错误状态
-            guard let errorIndex = dreams.firstIndex(where: { $0.id == dream.id }) else { return }
-            updateStatus(at: errorIndex, to: .failed)
-            
-            let detailedError: String
-            if let apiError = error as? APIError {
-                detailedError = apiError.localizedDescription
-            } else {
-                detailedError = error.localizedDescription
+            // 更新结果（确保在主线程执行，以便 SwiftUI 能检测到变化）
+            await MainActor.run {
+                guard let currentIndex = dreams.firstIndex(where: { $0.id == dream.id }) else { return }
+                dreams[currentIndex].analysis = analysis
+                dreams[currentIndex].keywords = analysis.keywords
+                dreams[currentIndex].emotions = analysis.emotions
+                dreams[currentIndex].symbols = analysis.symbols
+                updateStatus(at: currentIndex, to: .analyzed)  // 分析完成，但未生成模型
+                currentDream = dreams[currentIndex]
+                
+                // 立即保存（确保分析结果被持久化）
+                saveDreams()
+                
+                print("✅ Dream analysis completed, status: analyzed")
+                isLoading = false
+                errorMessage = nil // 清除之前的错误
             }
-            
-            errorMessage = detailedError
-            isLoading = false
-            
-            print("❌ Dream analysis failed: \(detailedError)")
+        } catch {
+            // 更新错误状态（确保在主线程执行）
+            await MainActor.run {
+                guard let errorIndex = dreams.firstIndex(where: { $0.id == dream.id }) else { return }
+                updateStatus(at: errorIndex, to: .failed)
+                
+                let detailedError: String
+                if let apiError = error as? APIError {
+                    detailedError = apiError.localizedDescription
+                } else {
+                    detailedError = error.localizedDescription
+                }
+                
+                errorMessage = detailedError
+                isLoading = false
+                currentDream = dreams[errorIndex] // 确保 currentDream 更新
+                
+                print("❌ Dream analysis failed: \(detailedError)")
+            }
         }
     }
     
-    /// 为已分析的梦境生成 3D 模型
+    /// 为已分析的梦境生成 3D 模型（支持重新生成）
     func generateModel(for dream: Dream) async {
-        guard let index = dreams.firstIndex(where: { $0.id == dream.id }),
-              dream.status == .analyzed,
-              let analysis = dream.analysis else {
-            errorMessage = "Dream must be analyzed before generating model"
+        guard let index = dreams.firstIndex(where: { $0.id == dream.id }) else {
+            errorMessage = "Dream not found"
             return
+        }
+        
+        // 允许重新生成：如果梦境已有分析结果，即使状态不是 .analyzed 也可以生成
+        // 这样可以重新生成之前失败的梦境
+        guard let analysis = dream.analysis else {
+            errorMessage = "Dream must be analyzed before generating model. Please analyze first."
+            return
+        }
+        
+        // 如果状态是 .failed 或 .analyzed，允许重新生成
+        if dream.status != .analyzed && dream.status != .failed {
+            print("⚠️ Dream status is \(dream.status.rawValue), but proceeding with generation using existing analysis")
         }
         
         // 更新状态
@@ -184,6 +200,21 @@ class DreamStore {
             
             // 立即保存（确保 modelURL 被持久化）
             saveDreams()
+            
+            // 自动保存USDZ文件到设备的Documents目录
+            Task {
+                do {
+                    let exportedURL = try await ModelExporter.shared.exportModelToDocuments(
+                        modelURL: modelURL,
+                        dreamTitle: dream.title
+                    )
+                    print("✅ Model automatically saved to device: \(exportedURL.path)")
+                    print("📁 Location: Documents/ExportedModels/")
+                } catch {
+                    // 保存失败不影响主流程，只打印警告
+                    print("⚠️ Failed to auto-save model to device (this is optional): \(error.localizedDescription)")
+                }
+            }
             
             print("✅ Dream model generated, status: completed")
             isLoading = false

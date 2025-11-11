@@ -68,7 +68,7 @@ struct ContentView: View {
         )) {
             if let modelURL = appModel.previewModelURL,
                let title = appModel.previewDreamTitle {
-                DreamRealityView(modelURL: modelURL, dreamTitle: title)
+                ModelPreviewView(modelURL: modelURL, dreamTitle: title)
                     .onDisappear {
                         // 清理预览状态
                         appModel.previewModelURL = nil

@@ -45,7 +45,9 @@ class ModelExporter {
             .replacingOccurrences(of: "|", with: "_")
         
         let timestamp = Int(Date().timeIntervalSince1970)
-        let fileName = "\(sanitizedTitle)_\(timestamp).glb"
+        // 从URL判断文件格式，默认使用USDZ（visionOS推荐格式）
+        let fileExtension = modelURL.lowercased().contains(".usdz") ? "usdz" : "usdz"
+        let fileName = "\(sanitizedTitle)_\(timestamp).\(fileExtension)"
         let fileURL = modelsDirectory.appendingPathComponent(fileName)
         
         // 保存文件
@@ -102,4 +104,6 @@ struct ShareSheet: UIViewControllerRepresentable {
         // No update needed
     }
 }
+
+
 

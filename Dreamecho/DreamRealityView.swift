@@ -67,17 +67,28 @@ struct DreamRealityView: View {
                     }
                 } else {
                     // RealityKit 3D视图
-                    RealityView { content in
-                        await setupScene(content: content)
+                    if let modelEntity = modelEntity {
+                        RealityView { content in
+                            await setupScene(content: content)
+                        }
+                        .edgesIgnoringSafeArea(.all)
+                        .gesture(
+                            DragGesture()
+                                .targetedToEntity(modelEntity)
+                                .onChanged { value in
+                                    handleModelRotation(value: value)
+                                }
+                        )
+                    } else {
+                        // 如果模型实体未加载，显示加载中
+                        VStack(spacing: 24) {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                            Text("正在加载3D模型...")
+                                .font(.system(size: 18))
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    .edgesIgnoringSafeArea(.all)
-                    .gesture(
-                        DragGesture()
-                            .targetedToEntity(modelEntity)
-                            .onChanged { value in
-                                handleModelRotation(value: value)
-                            }
-                    )
                 }
             }
             .navigationTitle(dreamTitle)
@@ -114,52 +125,25 @@ struct DreamRealityView: View {
     private func setupScene(content: RealityViewContent) async {
         guard let modelEntity = modelEntity else { return }
 
-        // 创建世界锚点，放置在用户前方1.4米处
-        if let cameraTransform = content.cameraTransform {
-            // 计算锚点位置：前方1.4米
-            let translation = simd_float4x4(translation: [0, 0, -1.4])
-            let anchorMatrix = cameraTransform.matrix * translation
-
-            // 创建锚点实体
-            let anchor = AnchorEntity(world: Transform(matrix: anchorMatrix))
-
-            // 将模型添加到锚点
-            anchor.addChild(modelEntity)
-
-            // 添加到场景
-            content.add(anchor)
-
-            print("✅ 模型已放置在用户前方1.4米处")
-        } else {
-            // 备选方案：使用固定位置的锚点
-            let anchor = AnchorEntity()
-            anchor.addChild(modelEntity)
-            content.add(anchor)
-            print("⚠️ 使用固定锚点位置")
-        }
+        // 原生实现：使用固定位置锚点（visionOS窗口视图的标准方式）
+        // 在visionOS中，窗口视图使用固定世界坐标系统
+        // 位置 [0, 0, -1.4] 表示在用户前方约1.4米处（原生RealityKit方式）
+        let anchor = AnchorEntity()
+        anchor.position = SIMD3<Float>(0, 0, -1.4) // 放置在用户前方1.4米处
+        anchor.addChild(modelEntity)
+        content.add(anchor)
+        
+        print("✅ 模型已使用原生固定位置放置在用户前方1.4米处")
 
         // 添加环境光
         setupLighting(content: content)
     }
+    
 
     private func setupLighting(content: RealityViewContent) {
-        // 环境光
-        let ambientLight = Entity()
-        var ambientComponent = AmbientLightComponent()
-        ambientComponent.color = .white
-        ambientComponent.intensity = 0.6
-        ambientLight.components.set(ambientComponent)
-        content.add(ambientLight)
-
-        // 方向光
-        let directionalLight = Entity()
-        var directionalComponent = DirectionalLightComponent()
-        directionalComponent.color = .white
-        directionalComponent.intensity = 1000
-        directionalComponent.shadow = DirectionalLightComponent.Shadow()
-        directionalLight.components.set(directionalComponent)
-
-        // 设置光源位置和方向
+        // 方向光（visionOS RealityKit 使用 DirectionalLight）
+        let directionalLight = DirectionalLight()
+        directionalLight.light.intensity = 1000
         directionalLight.position = [0, 5, 5]
         directionalLight.look(at: [0, 0, 0], from: directionalLight.position, relativeTo: nil)
         content.add(directionalLight)
@@ -174,7 +158,7 @@ struct DreamRealityView: View {
         // 基于拖拽距离旋转模型
         let currentRotation = modelEntity.transform.rotation
         let newRotation = simd_mul(
-            simd_quatf(angle: rotation.x * rotationSpeed, axis: [0, 1, 0]),
+            simd_quatf(angle: Float(rotation.width) * rotationSpeed, axis: [0, 1, 0]),
             currentRotation
         )
 
@@ -185,7 +169,7 @@ struct DreamRealityView: View {
         guard let modelEntity = modelEntity else { return }
 
         // 重置到初始位置和大小
-        modelEntity.transform.scale = [1, 1, 1]
+        modelEntity.transform.scale = SIMD3<Float>(1, 1, 1)
         modelEntity.transform.rotation = simd_quatf(angle: 0, axis: [0, 1, 0])
 
         print("🔄 模型位置已重置")
@@ -204,7 +188,7 @@ struct DreamRealityView: View {
 
         // 平滑缩放动画
         let currentScale = modelEntity.transform.scale
-        let targetScaleVector = [targetScale, targetScale, targetScale]
+        let targetScaleVector = SIMD3<Float>(targetScale, targetScale, targetScale)
 
         // 创建缩放动画
         let scaleAnimation = FromToByAnimation<Transform>(
@@ -229,60 +213,40 @@ struct DreamRealityView: View {
         do {
             print("🎨 开始加载3D模型: \(modelURL)")
 
-            // 首先尝试从Bundle加载.reality文件（构建期转换的文件）
+            // 优先尝试从 RealityKitContent 包加载 .reality 文件（Reality Composer Pro 优化后的格式）
+            // 这是构建期通过 realitytool 转换的优化格式，性能最佳
+            if let realityURL = realityKitContentBundle.url(forResource: "dreamecho_model", withExtension: "reality") {
+                print("📦 从 RealityKitContent 包加载 .reality 文件（Reality Composer Pro 优化格式）")
+                let loadedEntity = try await Entity(contentsOf: realityURL)
+                
+                await MainActor.run {
+                    self.entity = loadedEntity
+                    self.modelEntity = findModelEntity(in: loadedEntity)
+                    self.isLoading = false
+                }
+                
+                print("✅ .reality 文件加载成功（Reality Composer Pro 优化格式）")
+                return
+            }
+            
+            // 备选方案：从主 Bundle 加载 .reality 文件
             if let bundleURL = Bundle.main.url(forResource: "dreamecho_model", withExtension: "reality") {
-                print("📦 从Bundle加载.reality文件")
+                print("📦 从主 Bundle 加载 .reality 文件")
                 let loadedEntity = try await Entity(contentsOf: bundleURL)
-
+                
                 await MainActor.run {
                     self.entity = loadedEntity
                     self.modelEntity = findModelEntity(in: loadedEntity)
                     self.isLoading = false
                 }
-
-                print("✅ .reality文件加载成功")
+                
+                print("✅ .reality 文件加载成功")
                 return
             }
 
-            // 备选方案：尝试从Bundle加载USDZ文件
-            if let bundleURL = Bundle.main.url(forResource: "dreamecho_model", withExtension: "usdz") {
-                print("📦 从Bundle加载USDZ文件")
-                let loadedEntity = try await Entity(contentsOf: bundleURL)
-
-                await MainActor.run {
-                    self.entity = loadedEntity
-                    self.modelEntity = findModelEntity(in: loadedEntity)
-                    self.isLoading = false
-                }
-
-                print("✅ USDZ文件加载成功")
-                return
-            }
-
-            // 最后备选：从网络下载GLB文件
-            print("🌐 从网络下载GLB文件")
-            guard let url = URL(string: modelURL) else {
-                throw ModelLoadError.invalidURL
-            }
-
-            let (data, response) = try await URLSession.shared.data(from: url)
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                throw ModelLoadError.downloadFailed
-            }
-
-            print("✅ GLB文件下载成功: \(data.count) bytes")
-
-            // 保存到临时文件
-            let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString)
-                .appendingPathExtension("glb")
-
-            try data.write(to: tempURL)
-
-            // 加载GLB文件
-            let loadedEntity = try await Entity(contentsOf: tempURL)
+            // 最后备选：运行时下载USDZ（原生实现）
+            print("🌐 运行时下载USDZ文件（原生实现）")
+            let loadedEntity = try await ModelLoader.shared.loadModel(from: modelURL)
 
             await MainActor.run {
                 self.entity = loadedEntity
@@ -290,10 +254,7 @@ struct DreamRealityView: View {
                 self.isLoading = false
             }
 
-            print("✅ GLB文件加载成功")
-
-            // 清理临时文件
-            try? FileManager.default.removeItem(at: tempURL)
+            print("✅ 3D模型加载成功（运行时USDZ格式）")
 
         } catch {
             print("❌ 模型加载失败: \(error.localizedDescription)")
@@ -318,23 +279,6 @@ struct DreamRealityView: View {
         }
 
         return nil
-    }
-}
-
-enum ModelLoadError: LocalizedError {
-    case invalidURL
-    case downloadFailed
-    case corruptedFile
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidURL:
-            return "无效的模型文件URL"
-        case .downloadFailed:
-            return "下载模型文件失败，请检查网络连接"
-        case .corruptedFile:
-            return "模型文件已损坏或格式不支持"
-        }
     }
 }
 

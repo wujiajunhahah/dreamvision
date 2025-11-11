@@ -16,8 +16,8 @@ struct DreamProcessingView: View {
     @State private var elapsedTime: TimeInterval = 0
     @State private var timer: Timer?
     
-    private let analysisTargetDuration: TimeInterval = 12
-    private let generationTargetDuration: TimeInterval = 80
+    private let analysisTargetDuration: TimeInterval = 15 // 分析通常需要10-15秒
+    private let generationTargetDuration: TimeInterval = 180 // 3D生成通常需要1.5-3分钟（180秒=3分钟，根据实际测试调整）
     
     var body: some View {
         ZStack {
@@ -29,79 +29,107 @@ struct DreamProcessingView: View {
             VStack(spacing: 40) {
                 Spacer()
                 
-                // 梦境标题 - 使用实时更新的标题
+                // 梦境标题 - 使用实时更新的标题（安全获取）
                 let currentDreamState = dreamStore.dreams.first(where: { $0.id == dream.id }) ?? dream
                 let currentStatus = currentDreamState.status
-                VStack(spacing: 12) {
-                    Text(currentDreamState.title)
-                        .font(DesignSystem.title)
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.center)
-                    
-                    Text("Processing your dream...")
-                        .font(DesignSystem.subheadline)
-                        .foregroundStyle(.secondary)
-                }
                 
-                DreamProgressView(
-                    status: currentStatus,
-                    progress: progress(for: currentDreamState),
-                    message: messageForStatus(currentStatus)
-                )
-                .frame(maxWidth: 500)
-                
-                // 预计时间显示
-                if let estimatedTime = estimatedTime(for: currentDreamState) {
-                    VStack(spacing: 8) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "clock.fill")
-                                .font(.system(size: 16))
+                // 如果状态是失败，显示错误信息
+                if currentStatus == .failed {
+                    VStack(spacing: 24) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 64))
+                            .foregroundStyle(.orange)
+                        
+                        Text("分析失败")
+                            .font(DesignSystem.title)
+                            .foregroundStyle(.primary)
+                        
+                        if let errorMsg = dreamStore.errorMessage {
+                            Text(errorMsg)
+                                .font(DesignSystem.body)
                                 .foregroundStyle(.secondary)
-                            Text("Estimated time remaining")
-                                .font(DesignSystem.caption)
-                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 40)
                         }
                         
-                        Text(formatTime(estimatedTime))
-                            .font(DesignSystem.title2)
-                            .foregroundStyle(.primary)
-                    }
-                    .padding(20)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(16)
-                }
-                
-                // 已用时间
-                VStack(spacing: 4) {
-                    Text("Elapsed time")
-                        .font(DesignSystem.caption)
-                        .foregroundStyle(.tertiary)
-                    Text(formatTime(elapsedTime))
-                        .font(DesignSystem.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                
-                Spacer()
-                
-                // 取消按钮（仅在分析阶段显示）
-                if currentStatus == .analyzing {
-                    Button {
-                        // 取消处理
-                        Task {
-                            await dreamStore.cancelProcessing(dream)
+                        Button("返回") {
+                            dismiss()
                         }
-                        dismiss()
-                    } label: {
-                        Text("Cancel")
-                            .font(DesignSystem.body)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 12)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(12)
+                        .buttonStyle(.borderedProminent)
+                        .padding(.top, 20)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.bottom, 40)
+                } else {
+                    VStack(spacing: 12) {
+                        Text(currentDreamState.title)
+                            .font(DesignSystem.title)
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.center)
+                        
+                        Text("Processing your dream...")
+                            .font(DesignSystem.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    DreamProgressView(
+                        status: currentStatus,
+                        progress: progress(for: currentDreamState),
+                        message: messageForStatus(currentStatus)
+                    )
+                    .frame(maxWidth: 500)
+                    
+                    // 预计时间显示
+                    if let estimatedTime = estimatedTime(for: currentDreamState) {
+                        VStack(spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "clock.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(.secondary)
+                                Text("Estimated time remaining")
+                                    .font(DesignSystem.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            
+                            Text(formatTime(estimatedTime))
+                                .font(DesignSystem.title2)
+                                .foregroundStyle(.primary)
+                        }
+                        .padding(20)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(16)
+                    }
+                    
+                    // 已用时间
+                    VStack(spacing: 4) {
+                        Text("Elapsed time")
+                            .font(DesignSystem.caption)
+                            .foregroundStyle(.tertiary)
+                        Text(formatTime(elapsedTime))
+                            .font(DesignSystem.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    // 取消按钮（仅在分析阶段显示）
+                    if currentStatus == .analyzing {
+                        Button {
+                            // 取消处理
+                            Task {
+                                await dreamStore.cancelProcessing(dream)
+                            }
+                            dismiss()
+                        } label: {
+                            Text("Cancel")
+                                .font(DesignSystem.body)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(12)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.bottom, 40)
+                    }
                 }
             }
             .padding(40)
@@ -115,26 +143,28 @@ struct DreamProcessingView: View {
         .onChange(of: dreamStore.dreams.first(where: { $0.id == dream.id })?.status) { oldValue, newValue in
             guard let newValue = newValue else { return }
             
+            print("🔄 Status changed: \(oldValue?.rawValue ?? "nil") -> \(newValue.rawValue)")
+            
             // 如果分析完成，自动关闭并返回列表
             if newValue == .analyzed {
+                print("✅ Analysis completed, dismissing in 1.5s...")
                 stopTimer()
                 // 延迟一下让用户看到完成状态
-                Task {
+                Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5秒
-                    await MainActor.run {
-                        dismiss()
-                    }
+                    print("🚪 Dismissing DreamProcessingView...")
+                    dismiss()
                 }
             }
             
             // 如果生成完成或失败，也关闭
             if newValue == .completed || newValue == .failed {
+                print("✅ Processing \(newValue == .completed ? "completed" : "failed"), dismissing in 2s...")
                 stopTimer()
-                Task {
+                Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 2_000_000_000) // 2秒
-                    await MainActor.run {
-                        dismiss()
-                    }
+                    print("🚪 Dismissing DreamProcessingView...")
+                    dismiss()
                 }
             }
         }
@@ -162,7 +192,8 @@ struct DreamProcessingView: View {
             return 0.1 + normalized * 0.4 // 10% - 50%
         case .analyzed: return 1.0
         case .generating:
-            let normalized = min(stageElapsed / generationTargetDuration, 1.0)
+            // 3D生成进度：基于实际时间，但不超过90%（保留10%给最终处理）
+            let normalized = min(stageElapsed / generationTargetDuration, 0.9)
             return 0.5 + normalized * 0.4 // 50% - 90%
         case .completed: return 1.0
         case .failed: return 0.0
@@ -186,10 +217,14 @@ struct DreamProcessingView: View {
         switch currentDream.status {
         case .analyzing:
             let remaining = max(analysisTargetDuration - stageElapsed, 0)
+            // 如果超过预计时间，显示已用时间而不是剩余时间
             return remaining > 0 ? remaining : nil
         case .generating:
+            // 3D生成时间较长，使用更灵活的预计时间
+            // 如果已经超过预计时间，显示"Processing..."而不是剩余时间
             let remaining = max(generationTargetDuration - stageElapsed, 0)
-            return remaining > 0 ? remaining : nil
+            // 如果剩余时间少于1分钟，不显示预计时间（避免显示0秒）
+            return remaining > 60 ? remaining : nil
         default:
             return nil
         }

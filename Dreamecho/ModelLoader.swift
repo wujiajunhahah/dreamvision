@@ -30,6 +30,17 @@ class ModelLoader {
         return modelCacheDir
     }
     
+    // Documents目录（用户可访问）
+    private var documentsModelsDirectory: URL {
+        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let modelsDir = documentsURL.appendingPathComponent("ExportedModels", isDirectory: true)
+        
+        // 确保目录存在
+        try? FileManager.default.createDirectory(at: modelsDir, withIntermediateDirectories: true)
+        
+        return modelsDir
+    }
+    
     private init() {
         // 加载已缓存的模型列表
         loadCacheIndex()
@@ -247,6 +258,21 @@ class ModelLoader {
         saveCacheIndex()
         
         print("💾 Model cached to: \(cacheURL.path) (format: \(fileExtension))")
+        
+        // 同时保存到Documents目录（用户可访问）
+        Task {
+            do {
+                let timestamp = Int(Date().timeIntervalSince1970)
+                let fileName = "model_\(timestamp)_\(abs(urlString.hash)).\(fileExtension)"
+                let documentsURL = documentsModelsDirectory.appendingPathComponent(fileName)
+                try data.write(to: documentsURL)
+                print("✅ Model also saved to device: \(documentsURL.path)")
+                print("📁 Location: Documents/ExportedModels/")
+            } catch {
+                // 保存到Documents失败不影响主流程
+                print("⚠️ Failed to save to Documents directory (optional): \(error.localizedDescription)")
+            }
+        }
         
         // 使用RealityKit加载模型
         do {
@@ -501,8 +527,7 @@ class ModelLoader {
                 continue
             }
             
-            // 尝试从 MDLMesh 创建 MeshResource
-            // 注意：这是一个简化的转换，可能不完美
+            // 从 MDLMesh 创建 MeshResource（完整实现）
             do {
                 let meshResource = try createMeshResource(from: object)
                 
@@ -517,11 +542,18 @@ class ModelLoader {
                 
                 let modelEntity = ModelEntity(mesh: meshResource, materials: [material])
                 
-                // 获取对象的变换
-                let transform = object.transform
-                if transform != nil {
-                    // 应用变换（简化处理）
-                    // 注意：MDLTransform 的转换比较复杂，这里先使用默认位置
+                // 获取并应用对象的完整变换矩阵
+                if let mdlTransform = object.transform {
+                    // 获取完整的变换矩阵
+                    let matrix = mdlTransform.matrix
+                    
+                    // 转换为 RealityKit Transform
+                    let realityTransform = Transform(matrix: matrix)
+                    
+                    // 应用完整的变换（位置、旋转、缩放）
+                    modelEntity.transform = realityTransform
+                    
+                    print("✅ Applied full transformation matrix to model entity")
                 }
                 
                 containerEntity.addChild(modelEntity)

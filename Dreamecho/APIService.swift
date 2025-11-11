@@ -41,12 +41,18 @@ class APIService {
 
     // MARK: - DeepSeek API
 
+    /// 3D生成模式
+    enum GenerationMode: String {
+        case visionOS = "visionOS"  // visionOS场景模式：强调空间、光影、雾化、体积光
+        case printSafe = "printSafe"  // 打印安全模式：强调单体封闭网格、底座、重心
+    }
+    
     /// 分析梦境内容
     func analyzeDream(_ description: String) async throws -> DreamAnalysis {
-        print("🔍 Starting dream analysis for: \(description.prefix(50))...")
+        print("🔍 Analyzing dream...")
 
         let requestBody = AnalyzeDreamRequestBody(
-            model: "deepseek-chat",
+            model: "deepseek-chat", // 使用标准模型（reasoner可能超时）
             messages: [
                 .init(role: "user", content: """
                 请分析以下梦境描述，并返回JSON格式的分析结果：
@@ -120,52 +126,72 @@ class APIService {
 
         let content = firstChoice.message.content
 
-        // 尝试提取 JSON（可能包含 markdown 代码块）
-        var jsonString = content.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // 移除 markdown 代码块标记（如果存在）
-        if jsonString.hasPrefix("```json") {
-            jsonString = String(jsonString.dropFirst(7))
-        } else if jsonString.hasPrefix("```") {
-            jsonString = String(jsonString.dropFirst(3))
-        }
-        if jsonString.hasSuffix("```") {
-            jsonString = String(jsonString.dropLast(3))
-        }
-        jsonString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-
+        // 智能提取JSON（处理多种格式）
+        let jsonString = extractJSON(from: content)
+        
+        print("📝 Extracted JSON string length: \(jsonString.count)")
+        
         guard let jsonData = jsonString.data(using: .utf8) else {
+            print("❌ Failed to convert JSON string to data")
             throw APIError.invalidResponse
         }
 
         do {
             let analysis = try decoder.decode(DreamAnalysis.self, from: jsonData)
             print("✅ Dream analysis parsed successfully")
-            print("   Keywords: \(analysis.keywords)")
-            print("   Emotions: \(analysis.emotions)")
+            print("   Keywords (\(analysis.keywords.count)): \(analysis.keywords.prefix(5).joined(separator: ", "))\(analysis.keywords.count > 5 ? "..." : "")")
+            print("   Emotions (\(analysis.emotions.count)): \(analysis.emotions.prefix(3).joined(separator: ", "))\(analysis.emotions.count > 3 ? "..." : "")")
+            print("   Symbols (\(analysis.symbols.count)): \(analysis.symbols.prefix(3).joined(separator: ", "))\(analysis.symbols.count > 3 ? "..." : "")")
             return analysis
-        } catch {
-            print("❌ JSON parsing error: \(error)")
-            print("❌ JSON string: \(jsonString.prefix(500))")
-            throw APIError.parsingFailed(error.localizedDescription)
+        } catch let decodeError {
+            print("❌ JSON parsing error: \(decodeError)")
+            print("❌ JSON string (first 500 chars): \(String(jsonString.prefix(500)))")
+            
+            // 尝试修复常见的JSON格式问题
+            if let fixedJSON = tryFixJSON(jsonString) {
+                print("🔧 Attempting to fix JSON format...")
+                if let fixedData = fixedJSON.data(using: .utf8),
+                   let fixedAnalysis = try? decoder.decode(DreamAnalysis.self, from: fixedData) {
+                    print("✅ Successfully fixed and parsed JSON")
+                    return fixedAnalysis
+                }
+            }
+            
+            throw APIError.parsingFailed(decodeError.localizedDescription)
         }
     }
 
-    /// 生成3D模型提示词
-    func generateModelPrompt(from analysis: DreamAnalysis) async throws -> String {
+    /// 生成3D模型提示词（中文视觉指示词，专业版）
+    /// 按照12维度规范生成可直接用于混元To3D的中文视觉指示词
+    func generateModelPrompt(from analysis: DreamAnalysis, mode: GenerationMode = .visionOS) async throws -> String {
+        print("🎨 Generating 3D visual prompt (Mode: \(mode.rawValue))...")
+        
+        let systemPrompt = """
+        你是一名"梦境到3D视觉指示词"的翻译器。输出一段中文场景描述（60–120字），仅描述可见空间、光照、材质、构图、尺度与几何，不要心理分析。若模式为打印安全，则必须包含：单体封闭网格、厚度≥2mm、无悬空、圆形底座一体成型、重心约束。禁止文字与Logo。
+        """
+        
+        let userPrompt = """
+        【模式】\(mode.rawValue)
+        
+        【关键词】\(analysis.keywords.joined(separator: "，"))
+        
+        【视觉线索】\(analysis.visualDescription)
+        
+        【情绪】\(analysis.emotions.joined(separator: "，"))
+        
+        
+        请按以下顺序编写一段可直接用于3D生成的中文视觉指示词：场景与空间→主体与叙事→构图与透视→光照与氛围→色彩与材质→动态暗示→\(mode == .printSafe ? "打印约束与底座与重心→" : "")禁止项。
+        
+        长度控制在60–120字，完整句式，不要列表，不要出现"情绪、关键词"等提示词字样。
+        """
+        
         let requestBody = GeneratePromptRequestBody(
-            model: "deepseek-chat",
+            model: "deepseek-chat", // 使用标准模型（reasoner可能超时）
             messages: [
-                .init(role: "user", content: """
-                基于以下梦境分析，生成一个简洁的3D模型提示词（英文，不超过50个单词）：
-
-                关键词：\(analysis.keywords.joined(separator: ", "))
-                视觉描述：\(analysis.visualDescription)
-
-                请只返回提示词，不要其他内容。
-                """)
+                .init(role: "system", content: systemPrompt),
+                .init(role: "user", content: userPrompt)
             ],
-            temperature: 0.8
+            temperature: 0.7
         )
 
         let (data, response) = try await performRequest(
@@ -178,19 +204,67 @@ class APIService {
             body: requestBody
         )
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("❌ Invalid response type")
             throw APIError.invalidResponse
+        }
+
+        // 详细的错误处理
+        guard httpResponse.statusCode == 200 else {
+            let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ DeepSeek API Error: HTTP \(httpResponse.statusCode)")
+            print("❌ Error response: \(errorString)")
+            
+            // 尝试解析错误详情
+            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let error = errorJson["error"] as? [String: Any],
+               let errorMessage = error["message"] as? String {
+                print("❌ Error message: \(errorMessage)")
+            }
+            
+            switch httpResponse.statusCode {
+            case 401:
+                throw APIError.authenticationFailed
+            case 402, 429:
+                throw APIError.invalidResponse // 速率限制或配额不足
+            default:
+                throw APIError.invalidResponse
+            }
+        }
+
+        // 打印响应内容用于调试
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("📥 DeepSeek response: \(responseString.prefix(500))")
         }
 
         let decoder = JSONDecoder()
-        let apiResponse = try decoder.decode(DeepSeekResponse.self, from: data)
-
-        guard let firstChoice = apiResponse.choices.first else {
+        do {
+            let apiResponse = try decoder.decode(DeepSeekResponse.self, from: data)
+            
+            guard let firstChoice = apiResponse.choices.first else {
+                print("❌ No choices in response")
+                throw APIError.invalidResponse
+            }
+            
+            let rawContent = firstChoice.message.content
+            
+            // 智能提取和清理中文视觉指示词
+            let cleanedPrompt = extractVisualPrompt(from: rawContent)
+            
+            // 验证提示词质量
+            let validatedPrompt = validateVisualPrompt(cleanedPrompt)
+            
+            print("✅ Generated Chinese visual prompt: \(validatedPrompt.prefix(150))")
+            print("📝 Prompt length: \(validatedPrompt.count) characters")
+            print("📊 Prompt quality check: \(validatedPrompt.count >= 60 && validatedPrompt.count <= 200 ? "✅ Good" : "⚠️ Length may be outside optimal range")")
+            return validatedPrompt
+        } catch {
+            print("❌ Failed to decode DeepSeek response: \(error)")
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("❌ Raw response: \(responseString)")
+            }
             throw APIError.invalidResponse
         }
-
-        return firstChoice.message.content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - 腾讯混元 API
@@ -252,46 +326,90 @@ class APIService {
     }
 
     /// 生成3D模型（使用后端代理服务）
-    func generate3DModel(prompt: String, analysis: DreamAnalysis? = nil) async throws -> String {
+    /// prompt: 中文视觉指示词（由DeepSeek生成）
+    func generate3DModel(prompt: String) async throws -> String {
         print("🎨 Starting 3D model generation with backend service...")
+        print("📝 Chinese visual prompt: \(prompt.prefix(150))...")
 
-        // 使用后端代理服务进行3D生成
-        let downloadURL = try await BackendAPIService.shared.generate3DModel(
-            dreamDescription: prompt,
-            analysis: analysis
-        )
+        // 使用后端代理服务进行3D生成（直接传递中文提示词）
+        let downloadURL = try await BackendAPIService.shared.generate3DModel(prompt: prompt)
 
-        // 写入 AppAssets/models.json 供构建期转换使用
-        try await writeToModelsJSON(downloadURL: downloadURL, dreamDescription: prompt)
+        // 尝试写入 AppAssets/models.json 供构建期转换使用（可选，失败不影响主流程）
+        // 注意：在运行时（visionOS设备）可能没有权限写入项目目录，这是正常的
+        Task {
+            do {
+                try await writeToModelsJSON(downloadURL: downloadURL, dreamDescription: prompt)
+            } catch {
+                // 静默失败，不影响主流程（运行时不需要这个功能）
+                print("⚠️ Failed to write models.json (this is normal in runtime): \(error.localizedDescription)")
+            }
+        }
 
         return downloadURL
     }
 
-    /// 写入 models.json 供构建期脚本使用
+    /// 写入 models.json 供构建期脚本使用（Reality Composer Pro 工作流）
+    /// 将下载的USDZ URL写入配置文件，Xcode Build Phase会自动下载并转换为.reality
     private func writeToModelsJSON(downloadURL: String, dreamDescription: String) async throws {
-        let modelsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("AppAssets")
-        let modelsFile = modelsDir.appendingPathComponent("models.json")
+        // 使用项目根目录的 AppAssets（构建期可访问）
+        guard let projectRoot = Bundle.main.bundlePath.components(separatedBy: "/").prefix(while: { $0 != "Build" }).joined(separator: "/").isEmpty ? 
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first :
+            URL(fileURLWithPath: "/\(Bundle.main.bundlePath.components(separatedBy: "/").prefix(while: { $0 != "Build" }).joined(separator: "/"))") else {
+            // 回退到Documents目录
+            let modelsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+                .appendingPathComponent("AppAssets")
+            let modelsFile = modelsDir.appendingPathComponent("models.json")
+            return try await writeToModelsJSONFallback(downloadURL: downloadURL, dreamDescription: dreamDescription, modelsFile: modelsFile)
+        }
+        
+        // 尝试写入项目根目录的 AppAssets（构建期可访问）
+        let projectAppAssets = projectRoot.appendingPathComponent("AppAssets")
+        let modelsFile = projectAppAssets.appendingPathComponent("models.json")
+        
+        // 如果项目目录不可写，回退到Documents目录
+        if !FileManager.default.isWritableFile(atPath: projectAppAssets.path) {
+            return try await writeToModelsJSONFallback(downloadURL: downloadURL, dreamDescription: dreamDescription, modelsFile: modelsFile)
+        }
+        
+        try await writeToModelsJSONFallback(downloadURL: downloadURL, dreamDescription: dreamDescription, modelsFile: modelsFile)
+    }
+    
+    /// 实际写入 models.json 的实现
+    private func writeToModelsJSONFallback(downloadURL: String, dreamDescription: String, modelsFile: URL) async throws {
 
+        // 读取现有配置（如果存在）
+        var existingModels: [[String: Any]] = []
+        if let existingData = try? Data(contentsOf: modelsFile),
+           let existingJson = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
+           let models = existingJson["models"] as? [[String: Any]] {
+            existingModels = models
+        }
+        
+        // 添加新模型（或更新同名模型）
+        let newModel: [String: Any] = [
+            "name": "dreamecho_model",
+            "url": downloadURL,
+            "description": dreamDescription,
+            "timestamp": ISO8601DateFormatter().string(from: Date())
+        ]
+        
+        // 移除同名旧模型（如果存在）
+        existingModels.removeAll { $0["name"] as? String == "dreamecho_model" }
+        existingModels.append(newModel)
+        
         let modelsData: [String: Any] = [
-            "models": [
-                [
-                    "name": "dreamecho_model",
-                    "url": downloadURL,
-                    "description": dreamDescription,
-                    "timestamp": ISO8601DateFormatter().string(from: Date())
-                ]
-            ]
+            "models": existingModels
         ]
 
         // 确保目录存在
-        try FileManager.default.createDirectory(at: modelsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: modelsFile.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         // 写入文件
         let jsonData = try JSONSerialization.data(withJSONObject: modelsData, options: .prettyPrinted)
         try jsonData.write(to: modelsFile)
 
         print("✅ Written to models.json: \(modelsFile.path)")
+        print("💡 Xcode Build Phase will automatically convert USDZ to .reality using Reality Composer Pro tools")
     }
 
     // MARK: - Helper Methods
@@ -367,9 +485,9 @@ class APIService {
 
         // 3. 计算签名
         let secretDate = hmacSha256(data: timestamp, key: "TC3" + hunyuanSecretKey)
-        let secretService = hmacSha256(data: service, key: secretDate)
-        let secretSigning = hmacSha256(data: "tc3_request", key: secretService)
-        let signature = hmacSha256Hex(data: stringToSign, key: secretSigning)
+        let secretService = hmacSha256(data: service, keyData: secretDate)
+        let secretSigning = hmacSha256(data: "tc3_request", keyData: secretService)
+        let signature = hmacSha256Hex(data: stringToSign, keyData: secretSigning)
 
         // 4. 拼接 Authorization
         let authorization = "\(algorithm) Credential=\(hunyuanSecretId)/\(credentialScope), SignedHeaders=\(signedHeaders), Signature=\(signature)"
@@ -401,10 +519,24 @@ class APIService {
         let hmac = HMAC<SHA256>.authenticationCode(for: dataData, using: symmetricKey)
         return Data(hmac)
     }
+    
+    /// HMAC-SHA256 (with Data key)
+    private func hmacSha256(data: String, keyData: Data) -> Data {
+        let dataData = Data(data.utf8)
+        let symmetricKey = SymmetricKey(data: keyData)
+        let hmac = HMAC<SHA256>.authenticationCode(for: dataData, using: symmetricKey)
+        return Data(hmac)
+    }
 
     /// HMAC-SHA256 (Hex)
     private func hmacSha256Hex(data: String, key: String) -> String {
         let hmacData = hmacSha256(data: data, key: key)
+        return hmacData.map { String(format: "%02x", $0) }.joined()
+    }
+    
+    /// HMAC-SHA256 (Hex, with Data key)
+    private func hmacSha256Hex(data: String, keyData: Data) -> String {
+        let hmacData = hmacSha256(data: data, keyData: keyData)
         return hmacData.map { String(format: "%02x", $0) }.joined()
     }
 
@@ -419,11 +551,9 @@ class APIService {
             throw APIError.invalidURL
         }
 
-        print("🌐 Making request to: \(url)")
-
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = 30.0 // 30秒超时
+        request.timeoutInterval = 120.0 // 120秒超时（DeepSeek API可能需要更长时间）
 
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
@@ -432,19 +562,126 @@ class APIService {
         if let body = body {
             let encoder = JSONEncoder()
             request.httpBody = try encoder.encode(body)
-            if let bodyString = String(data: request.httpBody!, encoding: .utf8) {
-                print("📤 Request body: \(bodyString.prefix(200))...")
-            }
         }
 
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            print("📥 Response received: \(data.count) bytes")
-            return (data, response)
-        } catch {
-            print("❌ Network error: \(error.localizedDescription)")
+        // 添加重试机制（最多重试2次）
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                return (data, response)
+            } catch {
+                lastError = error
+                if attempt < 3 {
+                    let delay = Double(attempt) * 2.0 // 2秒、4秒延迟
+                    print("⚠️ Request failed (attempt \(attempt)/3), retrying in \(Int(delay))s...")
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
+        }
+        
+        // 所有重试都失败
+        if let error = lastError {
+            print("❌ Network error after 3 attempts: \(error.localizedDescription)")
             throw APIError.networkError(error.localizedDescription)
         }
+        throw APIError.networkError("Unknown network error")
+    }
+    
+    // MARK: - 智能解析辅助函数
+    
+    /// 智能提取JSON（简化版 - 只处理基本格式，快速）
+    private func extractJSON(from content: String) -> String {
+        var jsonString = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !jsonString.isEmpty else { return jsonString }
+        
+        // 只移除markdown代码块标记（最常见的格式）
+        if jsonString.hasPrefix("```json") && jsonString.count >= 7 {
+            jsonString = String(jsonString.dropFirst(7))
+        } else if jsonString.hasPrefix("```") && jsonString.count >= 3 {
+            jsonString = String(jsonString.dropFirst(3))
+        }
+        if jsonString.hasSuffix("```") && jsonString.count >= 3 {
+            jsonString = String(jsonString.dropLast(3))
+        }
+        jsonString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 提取第一个JSON对象（简单快速，避免复杂的索引操作）
+        // 如果字符串已经是JSON格式，直接返回
+        if jsonString.hasPrefix("{") && jsonString.hasSuffix("}") {
+            return jsonString
+        }
+        
+        // 否则尝试提取JSON对象
+        if let jsonStart = jsonString.firstIndex(of: "{"),
+           let jsonEnd = jsonString.lastIndex(of: "}"),
+           jsonStart <= jsonEnd {
+            return String(jsonString[jsonStart...jsonEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        return jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    /// 尝试修复JSON（简化版 - 只修复最常见的问题）
+    private func tryFixJSON(_ jsonString: String) -> String? {
+        var fixed = jsonString
+        
+        // 只修复末尾多余的逗号（最常见的问题）
+        fixed = fixed.replacingOccurrences(of: ",}", with: "}")
+        fixed = fixed.replacingOccurrences(of: ",]", with: "]")
+        
+        // 验证修复后的JSON是否有效
+        if let jsonData = fixed.data(using: .utf8),
+           let _ = try? JSONSerialization.jsonObject(with: jsonData, options: []) {
+            return fixed
+        }
+        
+        return nil
+    }
+    
+    /// 智能提取中文视觉指示词（简化版 - 只移除基本标记）
+    private func extractVisualPrompt(from content: String) -> String {
+        var prompt = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return prompt }
+        
+        // 只移除markdown代码块（最常见的格式）
+        if prompt.hasPrefix("```") {
+            let lines = prompt.components(separatedBy: .newlines)
+            if lines.count > 2 {
+                prompt = lines.dropFirst().dropLast().joined(separator: "\n")
+            } else if lines.count == 1 {
+                prompt = prompt.replacingOccurrences(of: "```", with: "")
+            }
+            prompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        // 只移除最常见的前缀（减少循环次数）
+        let commonPrefixes = ["提示词：", "视觉指示词：", "Prompt：", "Prompt:"]
+        for prefix in commonPrefixes {
+            if prompt.count >= prefix.count && prompt.hasPrefix(prefix) {
+                prompt = String(prompt.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                break // 只处理第一个匹配的
+            }
+        }
+        
+        return prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    /// 验证和优化视觉指示词（简化版）
+    private func validateVisualPrompt(_ prompt: String) -> String {
+        var validated = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 只检查长度，如果太长就截断（不尝试在句号处截断，太慢）
+        if validated.count > 200 {
+            validated = String(validated.prefix(200))
+        }
+        
+        // 确保以句号结尾（如果内容完整）
+        if !validated.hasSuffix("。") && !validated.hasSuffix(".") && validated.count > 10 {
+            validated += "。"
+        }
+        
+        return validated
     }
 }
 

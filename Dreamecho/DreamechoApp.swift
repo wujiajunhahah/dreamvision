@@ -11,7 +11,7 @@ import SwiftUI
 struct DreamechoApp: App {
     @State private var dreamStore = DreamStore()
     @State private var appModel = AppModel()
-    
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -19,7 +19,7 @@ struct DreamechoApp: App {
                 .environment(appModel)
         }
         .windowStyle(.automatic)
-        
+
         ImmersiveSpace(id: appModel.immersiveSpaceID) {
             ImmersiveView()
                 .environment(appModel)
